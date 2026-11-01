@@ -77,5 +77,5 @@ Items are marked complete only after they have been tested.
 - [x] Inspect RHEL environment.
 - [x] Clone the challenge repository.
 - [x] Create `devops-implementation` from `main`.
-- [ ] Commit project documentation.
+- [x] Commit project documentation.
 - [ ] Verify the Java application.
