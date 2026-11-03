@@ -89,7 +89,22 @@ Items are marked complete only after they have been tested.
 - [x] Confirm MySQL data directory is backed by a named Podman volume.
 - [x] Implement Option B: app and MySQL on dedicated Podman bridge network.
 - [x] Re-test app health and API persistence with container-name DNS.
-- [ ] Continue to kind/Kubernetes, Helm, Terraform, CI/CD, observability,
-      security, and operations runbook.
+- [x] Complete the local kind/Kubernetes and Helm deployment.
+- [x] Provision a separate kind lab cluster with Terraform.
+- [ ] Integrate Terraform with the application Helm release, if required.
+- [ ] Implement CI/CD, observability, security hardening, and the operations runbook.
 
 Option A evidence and details: `docs/03-containerization-option-a.md`.
+
+## Local Lab Startup and Verification
+
+- [x] Create and verify the kind cluster `devops-lab` using rootless Podman.
+- [x] Deploy Crewmeister and MySQL to `devops-lab` using Helm.
+- [x] Verify application and database pods are Running and the API is functional.
+- [x] Add `scripts/start-devops-lab.sh` to start and verify the existing lab.
+- [x] Configure the user-level `devops-lab-startup.service`.
+- [x] Verify the systemd oneshot service completes successfully.
+- [x] Add Terraform configuration for a separate kind cluster named `terraform-lab`.
+- [ ] Integrate Terraform management of the application Helm release, if required.
+- [ ] Add CI workflow and monitoring components.
+

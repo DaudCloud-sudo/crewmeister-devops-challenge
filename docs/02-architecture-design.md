@@ -45,3 +45,23 @@ flowchart TD
 - Terraform state location and exact resource ownership.
 - Whether to add Prometheus and Grafana.
 - Whether to use AWS after the local workflow is verified.
+
+## Local Lab Runtime and Startup
+
+The local application environment uses rootless Podman with kind. The `devops-lab`
+cluster hosts the Crewmeister application and MySQL, deployed through the Helm
+release `crewmeister`.
+
+The helper script `scripts/start-devops-lab.sh` starts the existing kind node
+container when necessary, waits for the Kubernetes node to become Ready, and
+reports the application pods, database pod, and Helm release.
+
+A user-level systemd oneshot service, `devops-lab-startup.service`, invokes this
+script at user startup. Its `active (exited)` state with a successful exit status
+indicates that the startup and verification operation completed.
+
+Terraform currently manages a separate kind cluster named `terraform-lab` through
+`terraform/kind-lab`. This Terraform-managed cluster is distinct from the
+`devops-lab` cluster hosting the Helm deployment. Terraform does not currently
+manage the Helm release or application resources in `devops-lab`.
+

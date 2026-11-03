@@ -149,3 +149,19 @@ API operations succeeded through the containerized app.
 **Learning:** A container image packages the application; a container is a
 running instance. App and database are separate containers connected by a
 network. Runtime environment variables configure the app's database connection.
+
+## Local Lab Operations
+
+The lab uses rootless Podman and kind. The `devops-lab` cluster hosts the Helm
+deployed application and MySQL. Terraform manages a separate cluster named
+`terraform-lab`; these are currently independent environments.
+
+A user-level systemd oneshot service starts and verifies the existing `devops-lab`
+cluster by invoking `scripts/start-devops-lab.sh`. The service is expected to show
+`active (exited)` after successful completion because it is a oneshot unit with
+`RemainAfterExit=yes`.
+
+The startup helper verifies the existing environment; it does not create a new
+cluster, apply Terraform, or redeploy the Helm release. Terraform-to-Helm
+integration remains a possible follow-up.
+

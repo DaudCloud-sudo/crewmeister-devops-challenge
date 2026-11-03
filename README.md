@@ -66,3 +66,26 @@ Retrieves a user by ID
 
 Creates a new user
 
+
+## Local DevOps Lab: Startup and Verification
+
+The local Kubernetes lab uses rootless Podman and kind. The existing `devops-lab`
+cluster runs the Crewmeister application and MySQL through the Helm release
+`crewmeister`.
+
+To start and verify the existing cluster manually, run `./scripts/start-devops-lab.sh`.
+The script starts the existing kind node container if needed, waits for the Kubernetes
+node to become Ready, and displays the application pods, MySQL pod, and Helm release.
+
+A user-level systemd service is configured as `devops-lab-startup.service`.
+It is enabled to run at user startup. Check its status with
+`systemctl --user status devops-lab-startup.service --no-pager`.
+
+The service is a `Type=oneshot` unit with `RemainAfterExit=yes`. Therefore,
+`active (exited)` with `status=0/SUCCESS` means the startup and verification
+script completed successfully; it is not a continuously running process.
+
+The Terraform configuration in `terraform/kind-lab` manages a separate kind
+cluster named `terraform-lab`. It is separate from the `devops-lab` cluster
+and the Helm release described above.
+
