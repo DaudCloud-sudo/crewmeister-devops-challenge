@@ -1,91 +1,102 @@
-# Crewmeister Challenge
+# Crewmeister DevOps Coding Challenge
 
-## Background
+A local-first DevOps implementation for the Crewmeister Spring Boot user-management API. This project demonstrates containerization, Kubernetes deployment, infrastructure provisioning, and automated build-and-test checks.
 
-At Crewmeister, our development team is continuously growing. We aim to hire the best educated, motivated, and enthusiastic people in the field who have fun building up Crewmeister in our vision to empower small businesses to thrive in a digital world. For this quest, we are continuously getting new applicants from all over the world. To filter which candidates could be a good fit, we provide our candidates with a coding challenge that we manually review and evaluate.
+## Challenge requirements
 
----
+| Challenge requirement | Implementation |
+|---|---|
+| Dockerfile | Container image for the Spring Boot application |
+| Helm chart | `helm/crewmeister` deploys the application and MySQL |
+| Terraform interacting with Kubernetes | Terraform provisions a local kind cluster |
+| Local-machine operation | Rootless Podman and kind on RHEL |
+| CI pipeline (Plus) | GitHub Actions build-and-test workflow |
+| Application health monitoring (Plus) | Spring Boot Actuator health endpoint |
 
-## DevOps Engineer Task
+**Implementation scope:** Terraform currently manages a separate kind cluster named `terraform-lab`. Helm deploys Crewmeister and MySQL into `devops-lab`. Terraform does not currently manage that Helm release.
 
-As a DevOps Engineer at Crewmeister, you will be in charge of several challenging tasks in your daily work. One of your core responsibilities will be to ensure that the system is always running smoothly and that the application is deployed successfully to our customers.
+## Architecture
 
-In this challenge, you should use DevOps best practices to architect and implement the complete cycle of building, packaging, and deploying a Java application (specified later in this document). 
+```mermaid
+flowchart TD
+    Dev[Developer] --> Git[Git repository]
+    Git --> GH[GitHub]
+    GH --> CI[GitHub Actions]
+    CI --> Test[Build and test]
+    Dev --> Podman[Rootless Podman]
+    Podman --> Kind[kind Kubernetes cluster]
+    Helm[Helm chart] --> Kind
+    Kind --> App[Crewmeister Spring Boot API]
+    Kind --> DB[MySQL + persistent volume]
+    App --> DB
+    App --> Health[Actuator health]
+    TF[Terraform] --> TFCluster[Separate kind cluster]
+```
 
-The following are core technologies/tools that should be present in the solution:
+## Why these tools?
 
-- Dockerfile
-- Helm Chart
-- Terraform to interact with the Kubernetes cluster
+- **Podman:** supports rootless container execution without requiring a Docker daemon.
+- **kind:** provides a local Kubernetes environment using containers as nodes, avoiding a paid cloud dependency for development and verification.
+- **Helm:** groups Kubernetes resources and configuration into a reusable release, simplifying deployment and upgrades.
+- **Terraform:** demonstrates declarative and repeatable infrastructure provisioning.
+- **MySQL with a persistent volume:** separates database storage from the application pod. A PVC provides persistence, but it is not a backup or high-availability strategy.
+- **GitHub Actions:** automates build and test checks for pushes and pull requests.
+- **Actuator:** exposes application health information for operational checks.
 
-You have the flexibility to utilize any cloud provider of your choice to deploy and run the application effectively. Additionally, it should be designed to operate seamlessly on local machines, allowing for a versatile setup that caters to various operational preferences and environments.
+The local kind environment is intended for development and verification, not production high availability. The cluster is single-node.
 
-## Plus:
+## Application
 
-- Create a CI Pipeline in Github to automate the application lifecycle
+The supplied application uses Java 17, Spring Boot 3.3.5, MySQL, Flyway, Spring Data JPA, Maven, and Spring Boot Actuator.
 
-- Add monitoring tools to check the health of the application
+| Endpoint | Purpose |
+|---|---|
+| `POST /user` | Create a user |
+| `GET /user?id=<id>` | Retrieve a user by ID |
+| `/actuator/health` | Application health check |
 
-## Important Points:
+## Repository guide
 
-- At Crewmeister, we value creativity and pushing for better. You are encouraged to expand the solution as you find fit. To do so, you must ensure high-quality documentation and that the base solution is correctly executed.
-- All the tools used must be publicly accessible or explicitly documented on how to authenticate.
-- All the tools must be free to use.
+- [Architecture and design](docs/02-architecture-design.md) — architecture, design choices, and trade-offs.
+- [Containerization notes](docs/03-containerization-option-a.md) — containerization approach and evidence.
+- [Challenges and decisions](docs/CHALLENGES.md) — implementation challenges and decisions.
+- [Project checklist](docs/PROJECT_CHECKLIST.md) — implementation progress and remaining work.
+- [Helm chart](helm/crewmeister/) — application and MySQL deployment configuration.
+- [Terraform configuration](terraform/kind-lab/) — local kind cluster provisioning.
+- [Startup script](scripts/start-devops-lab.sh) — start and verify the existing lab.
+- [GitHub Actions workflow](.github/workflows/ci.yml) — automated build and test workflow.
 
- ## Submission:
-- Provide the link to your GitHub repository in the Greenhouse submission form.
-- Submit your completed project via the Greenhouse link in the email received from the Recruitment Manager.
+## Local lab
 
-## Challenge Application
+The `devops-lab` cluster runs Crewmeister and MySQL using the Helm release `crewmeister`.
 
-A Spring Boot application that provides a simple user management REST API.
+Start and verify the existing lab:
 
-### Technologies Used
+```bash
+./scripts/start-devops-lab.sh
+```
 
-- Java 17
-- Spring Boot 3.3.5
-- MySQL Database
-- Flyway Migration
-- Maven
-- Spring Data JPA
-- Spring Actuator
+Check the user-level startup service:
 
-### Pre-requisites
+```bash
+systemctl --user status devops-lab-startup.service --no-pager
+```
 
-- JDK 17
-- MySQL
-- Maven
+The service is a systemd oneshot unit. `active (exited)` with a successful exit status means the startup and verification script completed.
 
-### API Endpoints
+## CI
 
-#### GET /user
+GitHub Actions runs the Maven build and tests on pushes and pull requests. The Spring Boot context test requires MySQL because Flyway initializes the database during application startup. The CI job therefore needs a MySQL service.
 
-Retrieves a user by ID
+## Limitations and next steps
 
-#### POST /user
+- Terraform does not yet manage the application Helm release.
+- The local kind cluster is single-node and does not provide node-level high availability.
+- Persistent storage is not a database backup strategy.
+- Prometheus and Grafana are not currently deployed.
+- CI is considered verified only after the workflow passes with its MySQL service configured.
 
-Creates a new user
+## Challenge submission
 
-
-## Local DevOps Lab: Startup and Verification
-
-The local Kubernetes lab uses rootless Podman and kind. The existing `devops-lab`
-cluster runs the Crewmeister application and MySQL through the Helm release
-`crewmeister`.
-
-To start and verify the existing cluster manually, run `./scripts/start-devops-lab.sh`.
-The script starts the existing kind node container if needed, waits for the Kubernetes
-node to become Ready, and displays the application pods, MySQL pod, and Helm release.
-
-A user-level systemd service is configured as `devops-lab-startup.service`.
-It is enabled to run at user startup. Check its status with
-`systemctl --user status devops-lab-startup.service --no-pager`.
-
-The service is a `Type=oneshot` unit with `RemainAfterExit=yes`. Therefore,
-`active (exited)` with `status=0/SUCCESS` means the startup and verification
-script completed successfully; it is not a continuously running process.
-
-The Terraform configuration in `terraform/kind-lab` manages a separate kind
-cluster named `terraform-lab`. It is separate from the `devops-lab` cluster
-and the Helm release described above.
+This project uses locally runnable tools and does not require a paid cloud environment for the local lab. The repository is intended to document the implementation, its verification, and its current limitations.
 
