@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crewmeister-app
+spec:
+  replicas: {{ .Values.app.replicaCount }}
+  selector:
+    matchLabels:
+      app: crewmeister-app
+  template:
+    metadata:
+      labels:
+        app: crewmeister-app
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.app.image.repository }}:{{ .Values.app.image.tag }}"
+          imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://{{ .Values.app.database.host }}:{{ .Values.app.database.port }}/{{ .Values.app.database.name }}?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_WRITER_URL
+              value: "jdbc:mysql://{{ .Values.app.database.host }}:{{ .Values.app.database.port }}/{{ .Values.app.database.name }}?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: {{ .Values.app.database.username | quote }}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.database.existingSecret }}
+                  key: {{ .Values.app.database.secretKey }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}

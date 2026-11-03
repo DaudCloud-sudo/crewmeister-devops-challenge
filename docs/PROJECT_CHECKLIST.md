@@ -78,4 +78,18 @@ Items are marked complete only after they have been tested.
 - [x] Clone the challenge repository.
 - [x] Create `devops-implementation` from `main`.
 - [x] Commit project documentation.
-- [ ] Verify the Java application.
+- [x] Verify the Java application.
+
+## Progress checkpoint — Containerization verified
+- [x] Build and verify the Spring Boot application with MySQL available.
+- [x] Build the application container image with Podman.
+- [x] Run the app container on host port 8081 -> container port 8080.
+- [x] Verify Actuator health from the container.
+- [x] Verify POST -> MySQL persistence -> GET through the container.
+- [x] Confirm MySQL data directory is backed by a named Podman volume.
+- [x] Implement Option B: app and MySQL on dedicated Podman bridge network.
+- [x] Re-test app health and API persistence with container-name DNS.
+- [ ] Continue to kind/Kubernetes, Helm, Terraform, CI/CD, observability,
+      security, and operations runbook.
+
+Option A evidence and details: `docs/03-containerization-option-a.md`.

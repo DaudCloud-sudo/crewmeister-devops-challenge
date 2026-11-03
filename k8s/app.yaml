@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crewmeister-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crewmeister-app
+  template:
+    metadata:
+      labels:
+        app: crewmeister-app
+    spec:
+      containers:
+        - name: app
+          image: localhost/crewmeister-app:0.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://mysql:3306/challenge?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_WRITER_URL
+              value: "jdbc:mysql://mysql:3306/challenge?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: root
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-auth
+                  key: root-password
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crewmeister-app
+  namespace: default
+spec:
+  selector:
+    app: crewmeister-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

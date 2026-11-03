@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: crewmeister-app
+spec:
+  type: ClusterIP
+  selector:
+    app: crewmeister-app
+  ports:
+    - name: http
+      port: {{ .Values.app.service.port }}
+      targetPort: 8080
