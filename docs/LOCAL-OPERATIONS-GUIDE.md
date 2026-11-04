@@ -321,6 +321,8 @@ curl --fail --silent --show-error http://127.0.0.1:13000/api/dashboards/uid/crew
 
 The MySQL exporter target should show `health: up` at `http://mysql-exporter.monitoring.svc.cluster.local:9104/metrics`; the query `mysql_up{job="mysql-exporter"}` should return `1`. Other verified series include `mysql_global_status_uptime`, `mysql_global_status_threads_connected`, `mysql_global_variables_max_connections`, `mysql_global_status_queries`, and `mysql_global_status_connections`. Query rates use `rate(...[5m])` because query and connection totals are counters. The exporter readiness probe checks only its HTTP listener; the MySQL target plus `mysql_up=1` verifies its database collection.
 
+The README screenshot captures the visible application overview and JVM/runtime panels. The MySQL dashboard row is below that screenshot's viewport, so use the Prometheus target and query checks above as evidence for server-side MySQL metrics.
+
 ### MySQL exporter account and verification
 
 The checked-in `monitoring/mysql-exporter.yaml` references Secret `mysql-exporter-auth`. Provisioning added one account to MySQL’s grant tables; it did not alter application tables, Flyway state, or the PVC. The account has `PROCESS`, `REPLICATION CLIENT`, and `SELECT`; the global `SELECT ON *.*` grant allows reading any schema, including application data. The account is capped at three simultaneous MySQL connections. Its host is `%` because exporter Pod IPs change; MySQL remains exposed only through its existing ClusterIP inside this kind cluster.

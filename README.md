@@ -1,111 +1,96 @@
 # Crewmeister DevOps challenge
 
-Packages and runs the supplied Java 17 Spring Boot user API with MySQL on a local kind cluster. The core tools are Docker-compatible image packaging, Helm deployment, Terraform-managed kind infrastructure, and a local Kubernetes workflow.
+This project packages and deploys the supplied Java 17 Spring Boot user API with MySQL on local Kubernetes. It uses rootless Podman and kind on RHEL, Helm for the app release, Terraform for a separate kind lab, GitHub Actions for hosted CI, and Prometheus/Grafana for monitoring.
+
+The [challenge brief](https://raw.githubusercontent.com/crewmeister/devops-coding-challenge/main/README.md) names a Dockerfile, Helm chart, and Terraform/Kubernetes as core tools; GitHub CI and application-health monitoring are Plus items.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-  Source --> Maven[GitHub Actions: Maven verify + MySQL]
-  Maven --> Jar[Packaged JAR artifact]
-  Local[Developer on RHEL] --> Podman[kind nodes via Podman]
-  Dockerfile --> Image[Application image]
-  Image --> Devops[kind: devops-lab]
-  Helm --> Devops
-  Devops --> App[Spring Boot API]
-  Devops --> MySQL[MySQL + PVC]
-  App --> MySQL
-  App --> Health[Actuator health]
-  App -->|/actuator/prometheus| Prometheus
-  MySQL --> Exporter[mysqld_exporter]
-  Exporter -->|:9104/metrics| Prometheus
-  Grafana --> Prometheus
-  Terraform --> TerraformLab[Separate kind: terraform-lab]
+  subgraph VM["RHEL 10.2 VM"]
+    Podman[Rootless Podman] --> Kind["kind: devops-lab"]
+    Helm["Helm: crewmeister"] --> Kind
+    Kind --> App[Spring Boot API]
+    Kind --> DB["MySQL + PVC"]
+    Kind --> Prometheus
+    Kind --> Exporter[mysqld_exporter]
+    Kind --> Grafana
+    App -->|REST and JDBC| DB
+    App -->|/actuator/prometheus| Prometheus
+    Exporter -->|MySQL :3306| DB
+    Exporter -->|/metrics :9104| Prometheus
+    Grafana -->|queries| Prometheus
+  end
+
+  Repo[GitHub repository] --> CI["GitHub Actions: hosted CI"]
+  Terraform[Terraform] --> TerraformLab["Separate kind: terraform-lab"]
 ```
 
-## Run locally
+Helm deploys Crewmeister and MySQL into `devops-lab`; Terraform creates the separate `terraform-lab` cluster and does not manage the Crewmeister release. GitHub Actions runs on a temporary hosted runner, separate from the RHEL VM, and does not deploy to the local cluster.
 
-The startup helper starts the existing kind node container if needed, waits up to three minutes for a Ready node, then reports nodes, pods, and Helm releases. It does not create or reset a cluster or redeploy the application.
+## Technology choices
 
-```bash
-./scripts/start-devops-lab.sh
-```
-
-After a VM restart, run `./scripts/verify-devops-lab.sh` for a bounded, non-destructive workload, storage, Service, Helm, and health check. See the [local operations guide](docs/LOCAL-OPERATIONS-GUIDE.md) for full recovery steps, API and MySQL checks, and troubleshooting.
-
-To package the application, build an image, and make it available to kind:
-
-```bash
-./mvnw --batch-mode -DskipTests package
-podman build -t localhost/crewmeister-app:0.2 .
-podman save --format docker-archive --output /tmp/crewmeister-app-0.2.tar localhost/crewmeister-app:0.2
-KIND_EXPERIMENTAL_PROVIDER=podman kind load image-archive --name devops-lab /tmp/crewmeister-app-0.2.tar
-```
-
-Helm is the canonical application deployment. Before installing, create the Kubernetes Secret from a local password file (never commit that file):
-
-```bash
-kubectl --context kind-devops-lab create secret generic mysql-auth \
-  --from-file=root-password="$HOME/.config/crewmeister/mysql-root-password" \
-  --dry-run=client -o yaml | kubectl --context kind-devops-lab apply -f -
-helm upgrade --install crewmeister ./helm/crewmeister \
-  --kube-context kind-devops-lab
-```
-
-Verify the deployment and health endpoint:
-
-```bash
-kubectl --context kind-devops-lab get pods
-kubectl --context kind-devops-lab port-forward service/crewmeister-app 8080:8080
-# In another terminal:
-curl --fail http://localhost:8080/actuator/health
-```
-
-The chart defines readiness and liveness probes against Actuator health. A health check answers whether the application reports itself ready; it does not collect or graph historical measurements.
-
-### Monitoring
-
-Actuator and Micrometer expose application health and metrics. Prometheus scrapes `/actuator/prometheus` and the MySQL exporter every 30 seconds; the **Crewmeister Application** Grafana dashboard shows application traffic, JVM/runtime, the app-side Hikari pool, MySQL server counters, and scrape health. Verify both targets and a live MySQL metric through a loopback-only Prometheus port-forward:
-
-```bash
-kubectl --context kind-devops-lab -n monitoring port-forward --address 127.0.0.1 service/prometheus 19090:9090
-# In another terminal:
-curl --fail --silent --show-error http://127.0.0.1:19090/api/v1/targets?state=active
-curl --fail --silent --show-error --get --data-urlencode 'query=process_uptime_seconds{job="crewmeister-app"}' http://127.0.0.1:19090/api/v1/query
-curl --fail --silent --show-error --get --data-urlencode 'query=mysql_up{job="mysql-exporter"}' http://127.0.0.1:19090/api/v1/query
-```
-
-Both targets should report `health: up`, and `mysql_up` should return `1`. Open Grafana with `kubectl --context kind-devops-lab -n monitoring port-forward --address 127.0.0.1 service/grafana 13000:3000`, then visit `http://127.0.0.1:13000/d/crewmeister-app/crewmeister-application`. Grafana is anonymous Viewer-only and loopback-bound. Prometheus/Grafana history uses bounded ephemeral storage; this is local visibility, not backup or external alerting. See the [operations guide](docs/LOCAL-OPERATIONS-GUIDE.md#7-prometheus-and-grafana) for recovery and troubleshooting.
-
-## Architecture and responsibilities
-
-- **Dockerfile:** packages the Maven-built Java application into a container image.
-- **kind and Podman:** provide the local Kubernetes environment on the RHEL VM.
-- **Helm:** deploys Crewmeister and MySQL, including a PVC, to `devops-lab`.
-- **Terraform:** provisions the separate `terraform-lab` kind cluster. It does not currently manage the Helm release.
-- **GitHub Actions:** runs Maven `verify` with MySQL and separately validates the Helm chart, monitoring YAML/dashboard JSON, and shell syntax on temporary GitHub-hosted Ubuntu runners, separate from the RHEL VM. It uploads the JAR; it does not build/publish an image or deploy it.
-- **Actuator:** serves application health information used by Kubernetes probes and manual checks.
-- **Prometheus:** scrapes the app’s `/actuator/prometheus` endpoint every 30 seconds; its local TSDB retains at most three days and 384 MB on bounded ephemeral storage.
-- **MySQL exporter:** uses a dedicated MySQL account supplied through a Kubernetes Secret; Prometheus scrapes server metrics at `mysql-exporter.monitoring.svc.cluster.local:9104/metrics`.
-- **Grafana:** reads Prometheus and provisions a local dashboard for the application, JVM, Hikari pool, MySQL server, and scrape health. Access is anonymous, read-only, and intended only through a loopback-bound port-forward.
-- **CD:** optional enhancement, not a core requirement. No automated deployment is configured.
-- **AWS:** architecture/design consideration only; no AWS resources or deployment are implemented.
-
-`k8s/` contains plain-manifest reference examples for the same app and database resources. They are not the deployment path; use the Helm chart as the source of truth to avoid maintaining two independently editable configurations. Both paths reference the `mysql-auth` Secret by name and key; neither stores its password value in source. A Kubernetes Secret keeps the value out of the manifest, but does not by itself guarantee encryption at rest.
-
-## Challenge checklist
-
-| Area | Status | Evidence / remaining work |
+| Choice | Why it fits this project | Main trade-off |
 |---|---|---|
-| Dockerfile | **Complete** | Java 17 image built locally as `localhost/crewmeister-app:0.2` and loaded into kind. |
-| Helm chart | **Complete** | `helm/crewmeister` deploys the app, MySQL, Services, probes, and PVC; release `crewmeister` is deployed in `default`. |
-| Terraform + Kubernetes | **Partial** | `terraform/kind-lab/main.tf` provisions a separate kind cluster. It does not manage the app Helm release. |
-| Local Kubernetes with kind | **Complete** | `kind-devops-lab` node Ready; app/MySQL Pods Ready; `mysql-data` PVC Bound at 2Gi; health endpoint returned UP. |
-| GitHub Actions CI (Plus) | **Complete** | Run for commit `6f94da3` completed successfully; workflow runs Maven `verify` with MySQL and uploads the JAR. |
-| Monitoring (Plus) | **Complete** | Live Prometheus app and MySQL targets are UP; `mysql_up` is 1; exporter series are present. Grafana provisions the 21 data panels in the application/JVM/Hikari/MySQL/scrape dashboard. |
+| Rootless Podman | Available and practical on RHEL; daemonless CLI supports the local image workflow. | Rootless networking and storage differ from Docker in some cases; this is not a claim that one runtime is universally safer. |
+| kind | Runs Kubernetes nodes as containers for repeatable local testing. | The current cluster has one node and is not highly available. |
+| Helm | One chart is the canonical app/MySQL deployment, with values and release history. | The raw `k8s/` files are reference examples only; treating them as a second deployment path would create drift. |
+| Terraform | Declaratively provisions the separate local `terraform-lab` cluster. | The current kind provider is local-only; Terraform does not deploy the app release or cloud infrastructure. |
+| MySQL + PVC | Simple stateful database for the supplied API; the claim survives Pod replacement. | One MySQL instance, no failover, and no backup or disaster-recovery system. |
+| GitHub Actions | Tests the project in a clean hosted environment with a temporary MySQL service. | CI does not build/publish an image or deploy to the local kind cluster. |
+| Actuator, Prometheus, Grafana | Health probes report readiness; Prometheus stores metrics and Grafana displays them. | Local, bounded, ephemeral monitoring; no external alerting or durable history. |
 
-## Limits and verification notes
+## Quick start
 
-The local kind cluster is single-node. A PVC is not a database backup. Prometheus and Grafana use bounded ephemeral storage, so monitoring history is disposable. Terraform’s kind provider is local-only; cloud deployment would need a provider-specific cluster and authentication configuration. CD is optional and is not configured; AWS is design-only.
+On the configured VM, recover and verify the existing cluster and workloads:
 
-See [architecture](docs/02-architecture-design.md), [implementation notes](docs/CHALLENGES.md), and [checklist](docs/PROJECT_CHECKLIST.md) for concise evidence and remaining work.
+```bash
+./scripts/verify-devops-lab.sh
+```
 
-For VM restart recovery, MySQL/API verification, port-forwarding, and troubleshooting, see the [local operations guide](docs/LOCAL-OPERATIONS-GUIDE.md).
+The script starts the existing kind node if needed and checks app/MySQL readiness, the PVC, Helm release, health endpoint, and monitoring. It does not create or reset clusters. To deploy the chart, the app image must already be loaded into kind and the `mysql-auth` Secret must exist:
+
+```bash
+helm upgrade --install crewmeister ./helm/crewmeister --kube-context kind-devops-lab
+```
+
+For a fresh lab, image loading, Secret provisioning, API calls, and VM-restart recovery steps are in the [local operations guide](docs/LOCAL-OPERATIONS-GUIDE.md).
+
+## Monitoring
+
+Actuator exposes health for Kubernetes probes and Micrometer metrics at `/actuator/prometheus`. Prometheus scrapes the application Service and MySQL exporter every 30 seconds. Live checks confirmed both targets `UP`, `mysql_up` equal to `1`, and MySQL server metric series. Grafana’s **Crewmeister Application** dashboard has panels for HTTP traffic/errors/latency, JVM, the application-side Hikari pool, MySQL server metrics, and scrape health.
+
+Access Grafana through a loopback-only port-forward at `http://127.0.0.1:13000/d/crewmeister-app/crewmeister-application`. Run `./scripts/verify-devops-lab.sh` to verify the targets and a live MySQL query through Grafana.
+
+![Grafana dashboard showing Crewmeister application overview and JVM/runtime panels](docs/images/crewmeister-grafana-dashboard.png)
+
+*The capture shows the visible application overview and JVM/runtime panels. The MySQL section is below the captured viewport, so this image is not evidence of MySQL metrics.*
+
+## CI
+
+[Crewmeister CI run for commit `936d329`](https://github.com/DaudCloud-sudo/crewmeister-devops-challenge/actions/runs/41765219947) passed. GitHub Actions runs Maven `verify` with a temporary MySQL service, validates shell syntax and monitoring YAML/dashboard JSON, and lints/renders the Helm chart. It uploads the JAR; it does not publish an image or deploy.
+
+## Challenge requirements
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Dockerfile | **Complete** | Java 17 runtime image; `localhost/crewmeister-app:0.2` was built and loaded into kind. |
+| Helm chart | **Complete** | `helm/crewmeister` deploys the app, MySQL, Services, probes, and PVC; release `crewmeister` is deployed. |
+| Terraform with Kubernetes | **Partial** | `terraform/kind-lab/main.tf` provisions `terraform-lab`; it does not manage the Crewmeister release. The brief does not explicitly require Terraform to manage that Helm release. |
+| Local Kubernetes | **Complete** | Live verification found `kind-devops-lab` Ready, app/MySQL Pods Ready, `mysql-data` Bound, and Actuator health UP. |
+| GitHub Actions CI (Plus) | **Complete** | The linked run passed Maven/MySQL tests and configuration validation. |
+| Monitoring (Plus) | **Complete** | App and exporter targets are UP; `mysql_up=1`; Grafana returned live MySQL query data. |
+
+## Limitations and next steps
+
+This is a local single-node kind environment. MySQL is one instance backed by a PVC: Pod restarts retain the claim, but the setup provides neither database failover nor backups. Prometheus/Grafana history is ephemeral. No cloud deployment or automated CD is configured.
+
+An optional next phase can compare AWS production architectures and CD approaches, including cost and availability trade-offs. It is outside this challenge implementation; no AWS resources have been provisioned.
+
+## Detailed documentation
+
+- [Architecture decisions](docs/02-architecture-design.md)
+- [Implementation and challenge notes](docs/CHALLENGES.md)
+- [Local operations and troubleshooting](docs/LOCAL-OPERATIONS-GUIDE.md)
+- [Podman networking experiment](docs/03-containerization-option-a.md)

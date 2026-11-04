@@ -112,8 +112,10 @@ verified outcomes from planned improvements.
 - The same date, a Java 17 image tagged `localhost/crewmeister-app:0.2` was
   built and loaded into the existing kind cluster. The app was upgraded through
   Helm without changing the MySQL claim.
-- GitHub Actions run [41752780282](https://github.com/DaudCloud-Sudo/crewmeister-devops-challenge/actions/runs/41752780282)
-  for commit `6f94da3caf4414785352df81b9b38c127b23e355` completed successfully.
+- GitHub Actions run [41765219947](https://github.com/DaudCloud-sudo/crewmeister-devops-challenge/actions/runs/41765219947)
+  for commit `936d3297d85a62da22a2e5920389150e385055a9` completed successfully.
+  It ran Maven verification with MySQL and deployment-configuration checks;
+  it did not deploy to kind.
 - Live checks during monitoring finalization confirmed the app and MySQL
   exporter Prometheus targets UP, `mysql_up` equal to 1, and real MySQL uptime,
   connection, and query counter samples. Grafana's provisioned dashboard and
