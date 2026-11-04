@@ -4,6 +4,8 @@ This project packages and deploys the supplied Java 17 Spring Boot user API with
 
 The [challenge brief](https://raw.githubusercontent.com/crewmeister/devops-coding-challenge/main/README.md) names a Dockerfile, Helm chart, and Terraform/Kubernetes as core tools; GitHub CI and application-health monitoring are Plus items.
 
+> **Optional production design (design only):** [AWS high-availability architecture, CD, and cost model](docs/AWS-ARCHITECTURE-AND-CD.md). No AWS resources have been provisioned.
+
 ## Architecture
 
 ```mermaid
@@ -86,7 +88,7 @@ Access Grafana through a loopback-only port-forward at `http://127.0.0.1:13000/d
 
 This is a local single-node kind environment. MySQL is one instance backed by a PVC: Pod restarts retain the claim, but the setup provides neither database failover nor backups. Prometheus/Grafana history is ephemeral. No cloud deployment or automated CD is configured.
 
-An optional next phase can compare AWS production architectures and CD approaches, including cost and availability trade-offs. It is outside this challenge implementation; no AWS resources have been provisioned.
+The [AWS architecture and CD design](docs/AWS-ARCHITECTURE-AND-CD.md) is an optional production extension. It is not part of the challenge implementation; no AWS resources have been provisioned.
 
 ## Detailed documentation
 
