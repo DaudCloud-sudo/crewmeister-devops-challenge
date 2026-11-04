@@ -39,14 +39,8 @@ build/
 *.tfplan
 crash.log
 crash.*.log
-
-### Terraform ###
-**/.terraform/*
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log
-crash.*.log
-
 terraform-debug.log
 tfplan
+
+# Local captured command output
+/curl_response

@@ -106,11 +106,19 @@ verified outcomes from planned improvements.
 
 - Earlier local evidence records Maven verification, health checks, POST/GET
   persistence, an image build, and both Podman networking options as successful.
-- These are historical verification notes, not a claim that the containers or
-  kind clusters are currently running. Current live status must be checked on
-  the RHEL VM.
-- Kubernetes deployment evidence is summarized in `docs/PROJECT_CHECKLIST.md`;
-  the current audit could not reach the local Kubernetes API.
+- On 2026-11-04, the RHEL VM reported `kind-devops-lab` Ready, app/MySQL Pods
+  Ready, PVC `mysql-data` Bound, Helm release `crewmeister` deployed, and
+  Actuator health UP. A user POST was inspected in MySQL and read back with GET.
+- The same date, a Java 17 image tagged `localhost/crewmeister-app:0.2` was
+  built and loaded into the existing kind cluster. The app was upgraded through
+  Helm without changing the MySQL claim.
+- GitHub Actions run [41752780282](https://github.com/DaudCloud-Sudo/crewmeister-devops-challenge/actions/runs/41752780282)
+  for commit `6f94da3caf4414785352df81b9b38c127b23e355` completed successfully.
+- Live checks during monitoring finalization confirmed the app and MySQL
+  exporter Prometheus targets UP, `mysql_up` equal to 1, and real MySQL uptime,
+  connection, and query counter samples. Grafana's provisioned dashboard and
+  Prometheus data source are verified; details and limitations are in
+  `docs/LOCAL-OPERATIONS-GUIDE.md`.
 
 ## Container networking milestone — Option A verified
 - **Challenge:** The app container needed to connect to MySQL running in a
@@ -159,11 +167,13 @@ cluster by invoking `scripts/start-devops-lab.sh`. The service is expected to sh
 
 The startup helper verifies the existing environment; it does not create a new
 cluster, apply Terraform, or redeploy the Helm release. Terraform-to-Helm
-integration remains a possible follow-up.
+integration is not required for this implementation: Terraform provisions the
+separate `terraform-lab` cluster.
 
 The helper waits up to 180 seconds for the Kubernetes node to report `Ready`.
 This bound lets slow startup finish while ensuring a missing or unhealthy API
-returns a failure instead of leaving a systemd oneshot waiting forever. Actuator
-health is used by the application probes; Prometheus scraping and Grafana
-dashboards are not implemented.
+returns a failure instead of leaving a systemd oneshot waiting forever.
+Actuator health is used by application probes. The local monitoring manifests
+configure Prometheus scraping and a provisioned Grafana dashboard; see the
+operations guide for the target, API, and dashboard checks.
 

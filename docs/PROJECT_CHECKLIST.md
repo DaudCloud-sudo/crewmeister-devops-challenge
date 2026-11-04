@@ -1,15 +1,15 @@
 # Challenge checklist
 
-Statuses reflect repository evidence and recorded test results. “Unverified” means the current live environment or GitHub run was not checked; it does not erase earlier documented results.
+Statuses reflect repository configuration and live checks completed on 2026-11-04.
 
 | Requirement | Class | Status | Evidence and remaining work |
 |---|---|---|---|
-| Dockerfile | Core | Complete | `Dockerfile` packages the Java 17 JAR. `docs/CHALLENGES.md` records a successful Podman image build; rebuild for current verification. |
-| Helm chart | Core | Complete | `helm/crewmeister/` defines app, MySQL, services, probes, and persistent volume claim. Current cluster release not live-verified. |
-| Terraform interacting with Kubernetes | Core | Partial | `terraform/kind-lab/main.tf` provisions `terraform-lab` through the kind provider. It does not manage the `devops-lab` Helm release. |
-| Local Kubernetes with kind | Core | Complete | Prior `docs/CHALLENGES.md` and local lab notes record `devops-lab` deployment and API checks. Current cluster access was blocked during the audit. |
-| GitHub Actions CI | Plus | Partial | `.github/workflows/ci.yml` runs Maven verification with MySQL and uploads a JAR. Latest hosted run status not verified. |
-| Monitoring | Plus | Partial | Actuator health endpoint and Kubernetes probes are configured. Prometheus metrics scraping and Grafana are not implemented. |
+| Dockerfile | Core | Complete | `Dockerfile`; local Podman image `localhost/crewmeister-app:0.2` built and loaded into kind. |
+| Helm chart | Core | Complete | `helm/crewmeister/`; live release `crewmeister` deployed in `default`, app/MySQL Pods Ready, `mysql-data` PVC Bound at 2Gi. |
+| Terraform interacting with Kubernetes | Core | Partial | `terraform/kind-lab/main.tf` provisions the separate `terraform-lab` kind cluster. It does not manage the Crewmeister Helm release in `devops-lab`. |
+| Local Kubernetes with kind | Core | Complete | `kind-devops-lab` node Ready; app/MySQL Pods Ready; `/actuator/health` returned UP and user API POST/SQL/GET round trip succeeded. |
+| GitHub Actions CI | Plus | Complete | Workflow run for `6f94da3caf4414785352df81b9b38c127b23e355` completed successfully: [run 41752780282](https://github.com/DaudCloud-Sudo/crewmeister-devops-challenge/actions/runs/41752780282). It runs Maven `verify` with MySQL and uploads the JAR; it does not deploy. |
+| Monitoring | Plus | Complete | App and MySQL exporter Prometheus targets are UP; `mysql_up` is 1 and server metric samples are present. Grafana has 21 data panels spanning app, JVM, Hikari pool, MySQL server, and scrape health. |
 
 ## Implementation and evidence
 
@@ -21,8 +21,6 @@ Statuses reflect repository evidence and recorded test results. “Unverified”
 
 ## Optional work and limitations
 
-- A CI image-build check, image publication, and CD are optional; no automated delivery is configured.
-- Prometheus/Grafana are optional enhancements; health probes already provide basic health checking.
-- AWS is design-only. No cloud resources are provisioned.
+- Image publishing and CD are optional; no automated delivery is configured. AWS deployment is design-only and no cloud resources are provisioned.
 - Single-node kind has no node-level high availability. A PVC is not a backup.
-- The RHEL VM’s Kubernetes API and Podman runtime could not be inspected in the audit due to sandbox socket/runtime permissions; current live status remains unverified.
+- Prometheus and Grafana use bounded ephemeral storage and provide no backup or external alerting. A PVC is not a database backup. Grafana history/settings and Prometheus history can be lost if their Pods are replaced.

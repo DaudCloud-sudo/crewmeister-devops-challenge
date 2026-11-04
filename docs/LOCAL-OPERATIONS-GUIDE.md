@@ -19,6 +19,11 @@ flowchart TD
   A -->|mysql:3306| D
   User[Local curl] -->|kubectl port-forward, host 18080 to Service 8080| S[ClusterIP Service crewmeister-app]
   S --> A
+  A -->|/actuator/prometheus| PR[Prometheus in monitoring]
+  PR -->|scrape every 30s| S
+  X[mysqld_exporter in monitoring] -->|mysql:3306| D
+  X -->|:9104/metrics| PR
+  G[Grafana in monitoring] -->|Prometheus data source| PR
   N2 --> K2[Kubernetes cluster: kind-terraform-lab]
   TF[Terraform kind provider] --> K2
 ```
@@ -31,7 +36,10 @@ flowchart TD
 - **PVC:** `mysql-data` requests 2 GiB, `ReadWriteOnce`, and mounts at `/var/lib/mysql`. A Bound PVC stores data outside the MySQL Pod lifecycle. It does not establish backup coverage or guarantee survival if its cluster/storage is deleted.
 - **Helm:** release `crewmeister` deploys the app, MySQL, Services, probes, and PVC into `devops-lab` / `default`.
 - **Terraform:** `terraform/kind-lab/main.tf` uses provider `elioseverojunior/kind` version `0.0.4` to create the separate kind cluster `terraform-lab`. It does not manage the Crewmeister Helm release in `devops-lab`. The locally recorded Terraform state lists `kind_cluster.lab`; that does not prove the cluster is currently running.
-- **Monitoring:** the repository configures Actuator health and Kubernetes probes. It contains no Prometheus/Grafana deployment, Service, scrape configuration, dashboard, or Prometheus registry dependency. Do not expect a metrics target or dashboard from this project.
+- **Actuator health:** `/actuator/health`, `/actuator/health/liveness`, and `/actuator/health/readiness` report point-in-time health; app readiness/liveness probes use Actuator.
+- **Prometheus:** `monitoring/prometheus.yaml` deploys one Prometheus Pod/ClusterIP Service in `monitoring`. It scrapes `crewmeister-app.default.svc.cluster.local:8080/actuator/prometheus` every 30 seconds. TSDB uses bounded `emptyDir` storage (512 MiB maximum), configured for at most three days / 384 MB of samples. Its data is local and is not backed up.
+- **Grafana:** `monitoring/grafana.yaml` deploys one Grafana Pod/ClusterIP Service in `monitoring`, provisions a read-only Prometheus data source and the `Crewmeister Application` dashboard. The dashboard has 21 data panels grouped into application, JVM/runtime, app-side Hikari pool, MySQL server, and scrape health.
+- **MySQL exporter:** `monitoring/mysql-exporter.yaml` deploys a small exporter and ClusterIP Service at port 9104. It reads its password from Secret `mysql-exporter-auth`, never from a manifest literal. A dedicated account has `PROCESS`, `REPLICATION CLIENT`, and global `SELECT` grants, limited to three concurrent connections. The global `SELECT` grant can read any schema; provisioning required user approval. The account and Secret now exist, and live scrapes confirm MySQL metrics.
 
 There is no checked-in kind cluster configuration file. The cluster names, node name, Helm chart, and Terraform resource are the configuration evidence available in this repository.
 
@@ -197,7 +205,7 @@ After a VM restart, a missing listener on 18080 is expected until you start the 
 - `POST /user` with JSON containing a `name` string: saves a user and returns the greeting. The controller has no DTO or validation layer. A malformed body is caught and returned as `Error parsing JSON`; the controller does not set an error HTTP status in that catch path, so inspect the response body as well as the status.
 - `GET /actuator/health`: Actuator health. It is exposed by `application.yml` and used by Kubernetes readiness and liveness probes.
 - `GET /actuator/health/liveness` and `/actuator/health/readiness`: the latest live health response listed these groups. Verify their response on the current app before relying on them in automation.
-- `/actuator/prometheus`: not configured as a working metrics endpoint. Although Actuator health is exposed, `pom.xml` has no Micrometer Prometheus registry and `/actuator/prometheus` has not been verified.
+- `/actuator/prometheus`: exposed by Actuator with the Micrometer Prometheus registry dependency. It returns Prometheus text metrics; it is scraped in-cluster by the `monitoring` Prometheus Pod.
 
 With the port-forward running, check health and HTTP status:
 
@@ -259,9 +267,105 @@ Do not print Secret values. If you need to verify that the Secret object exists,
 
 ## 7. Prometheus and Grafana
 
-Prometheus and Grafana are **not implemented in this repository**. There are no corresponding Helm charts/manifests, Services, scrape targets, or dashboard provisioning. The Prometheus registry dependency is absent, and `/actuator/prometheus` has not been verified. Therefore this project has no application metrics endpoint, Prometheus targets page, Grafana URL, login, or dashboard to document as working.
+Monitoring runs in the same `devops-lab` cluster but independently of the Crewmeister Helm release. `monitoring/prometheus.yaml` and `monitoring/grafana.yaml` are plain manifests; Helm does not manage them. A normal VM restart should preserve these Kubernetes objects. Start the existing cluster as in section 2, then inspect them:
 
-If you want to check whether unrelated monitoring Pods exist in the live cluster, use `kubectl --context kind-devops-lab get pods,services -A | grep -Ei 'prometheus|grafana'`. No matching resources means there is no in-cluster instance to open. Do not treat health `UP` as metrics scraping: health is a request-time status; a Prometheus target would need a configured scrape endpoint and show `UP` on its Targets page. Grafana would need a data source connected to that Prometheus server. None of those steps are project-supported today.
+```bash
+kubectl --context kind-devops-lab -n monitoring get deployments,pods,services,endpoints
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/prometheus --timeout=120s
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/grafana --timeout=180s
+```
+
+If the Deployments or Services are absent (not merely stopped during cluster startup), restore the checked-in manifests. The exporter account and Secret must exist before applying the exporter Deployment. The account helper is intentionally guarded and refuses to overwrite an account, Secret, or local password file.
+
+```bash
+kubectl --context kind-devops-lab apply -f monitoring/prometheus.yaml
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/prometheus --timeout=180s
+kubectl --context kind-devops-lab apply -f monitoring/mysql-exporter.yaml
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/mysql-exporter --timeout=180s
+kubectl --context kind-devops-lab apply -f monitoring/grafana.yaml
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/grafana --timeout=420s
+```
+
+Do not routinely reapply manifests on each VM restart; first check the existing Deployments. These commands create/update monitoring resources, not the app, MySQL, or PVC.
+
+The Prometheus Service is `prometheus.monitoring.svc.cluster.local:9090`. Its scrape job selects the Crewmeister Service DNS name `crewmeister-app.default.svc.cluster.local:8080`, path `/actuator/prometheus`, every 30 seconds. A target `UP` means Prometheus successfully fetched and parsed metrics at the last scrape; it does not mean every API operation or the database is healthy. The Kubernetes readiness probe separately checks `/actuator/health/readiness`.
+
+Open a loopback-only port-forward in a terminal:
+
+```bash
+kubectl --context kind-devops-lab -n monitoring port-forward --address 127.0.0.1 service/prometheus 19090:9090
+```
+
+In another terminal, check the metrics endpoint through Prometheus and its active target:
+
+```bash
+curl --fail --silent --show-error http://127.0.0.1:19090/api/v1/targets?state=active
+curl --fail --silent --show-error --get --data-urlencode 'query=process_uptime_seconds{job="crewmeister-app"}' http://127.0.0.1:19090/api/v1/query
+```
+
+In the targets JSON, find `job: crewmeister-app`; expect `health: up`, scrape URL ending `/actuator/prometheus`, and an empty `lastError`. The query should return a nonempty result after a successful scrape. You can also browse `http://127.0.0.1:19090/targets`. The app endpoint itself can be checked through the app port-forward from section 2 at `http://127.0.0.1:18080/actuator/prometheus`; expect Prometheus text such as `http_server_requests_seconds_count`, `jvm_memory_used_bytes`, and `process_uptime_seconds`. Stop each foreground port-forward with Ctrl+C.
+
+Grafana listens on ClusterIP port 3000. Open its loopback-only port-forward:
+
+```bash
+kubectl --context kind-devops-lab -n monitoring port-forward --address 127.0.0.1 service/grafana 13000:3000
+```
+
+Visit `http://127.0.0.1:13000/d/crewmeister-app/crewmeister-application`. The provisioned dashboard is **Crewmeister Application** (UID `crewmeister-app`) with 21 data panels: application availability/request rate/latency/errors/uptime; JVM heap, CPU, threads, and GC; app-side Hikari pool; MySQL availability/uptime/connection utilization/threads/query and connection rates; and Prometheus scrape duration/sample count. The MySQL panels use exporter series verified in Prometheus. No password is required because anonymous Viewer mode is configured; keep the port-forward bound to `127.0.0.1` and do not expose the Service externally. Verify Grafana’s API health and its ability to query Prometheus:
+
+```bash
+curl --fail --silent --show-error http://127.0.0.1:13000/api/health
+curl --fail --silent --show-error http://127.0.0.1:13000/api/datasources/uid/prometheus/health
+curl --fail --silent --show-error http://127.0.0.1:13000/api/dashboards/uid/crewmeister-app
+```
+
+The MySQL exporter target should show `health: up` at `http://mysql-exporter.monitoring.svc.cluster.local:9104/metrics`; the query `mysql_up{job="mysql-exporter"}` should return `1`. Other verified series include `mysql_global_status_uptime`, `mysql_global_status_threads_connected`, `mysql_global_variables_max_connections`, `mysql_global_status_queries`, and `mysql_global_status_connections`. Query rates use `rate(...[5m])` because query and connection totals are counters. The exporter readiness probe checks only its HTTP listener; the MySQL target plus `mysql_up=1` verifies its database collection.
+
+### MySQL exporter account and verification
+
+The checked-in `monitoring/mysql-exporter.yaml` references Secret `mysql-exporter-auth`. Provisioning added one account to MySQL’s grant tables; it did not alter application tables, Flyway state, or the PVC. The account has `PROCESS`, `REPLICATION CLIENT`, and `SELECT`; the global `SELECT ON *.*` grant allows reading any schema, including application data. The account is capped at three simultaneous MySQL connections. Its host is `%` because exporter Pod IPs change; MySQL remains exposed only through its existing ClusterIP inside this kind cluster.
+
+To reproduce this setup on a fresh existing cluster, review and explicitly approve those grants, then run the guarded helper. It writes a generated password only to the user's mode-600 file under `~/.config/crewmeister`, sends SQL through stdin without printing the password, and creates the Kubernetes Secret from that file. It refuses to overwrite an existing account, Secret, or password file:
+
+```bash
+CONFIRM_MYSQL_EXPORTER_ACCOUNT=CREATE ./scripts/provision-mysql-exporter-account.sh
+```
+
+The Secret keeps the credential out of Git and Pod manifest literals; a Kubernetes Secret is base64-encoded by default and is not necessarily encrypted at rest. Do not display it with `kubectl get secret -o yaml`. If the guarded command reports that an account, Secret, or local file already exists, stop and reconcile those items manually rather than rotating credentials blindly.
+
+The current cluster has already completed this step. On a fresh cluster, after the helper succeeds, install the exporter and Prometheus scrape config, then wait for both Deployments:
+
+```bash
+kubectl --context kind-devops-lab apply -f monitoring/mysql-exporter.yaml
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/mysql-exporter --timeout=180s
+kubectl --context kind-devops-lab apply -f monitoring/prometheus.yaml
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/prometheus --timeout=180s
+```
+
+Use the Prometheus port-forward from above. The active target must show job `mysql-exporter`, health `up`, and scrape URL `http://mysql-exporter.monitoring.svc.cluster.local:9104/metrics`. Query `mysql_up{job="mysql-exporter"}` and require a value of `1`; verify server series and Grafana dashboard queries. The exporter’s readiness probe confirms its HTTP listener only; the `mysql_up` metric and Prometheus target establish database scrape success.
+
+Grafana port-forward diagnosis: on 2026-11-04, events showed repeated `Evicted` Pods after `grafana-data` exceeded first 128Mi and then 512Mi `emptyDir` limits. Earlier Grafana logs showed the default plugin preinstaller downloading suggested plugins into that directory. The exact user-supplied error was `network namespace for sandbox ... is closed`, followed by `lost connection to pod`; this is consistent with Kubernetes removing the Pod sandbox after eviction, rather than a host port bind failure. The manifest sets `GF_PLUGINS_PREINSTALL_DISABLED=true`. The current Pod has zero restarts and its data directory measured 2.7MiB; a prior 12-cycle check succeeded, and six consecutive health, Prometheus data-source, dashboard-version, and live MySQL-query checks through a local port-forward also passed over about one minute. Node `MemoryPressure` and `DiskPressure` are `False`; no OOM termination was observed. Historical Failed/Evicted Pod objects remain and were left untouched. `kubectl top` was unavailable because the cluster has no Metrics API, so current CPU/memory usage could not be verified.
+
+`kubectl port-forward` binds to a selected Pod; if that Pod terminates, the forwarding session ends and must be started again. If Grafana stops responding, check the Deployment, current Pod/restart count, Service endpoint, and events first:
+
+```bash
+kubectl --context kind-devops-lab -n monitoring rollout status deployment/grafana --timeout=180s
+kubectl --context kind-devops-lab -n monitoring get pods,service,endpoints -l app=grafana -o wide
+kubectl --context kind-devops-lab -n monitoring get events --sort-by=.metadata.creationTimestamp
+ss -ltnp | grep ':13000' || true
+```
+
+If Grafana is Ready with a Service endpoint but the old port-forward exited, stop only that old terminal process and reconnect:
+
+```bash
+kubectl --context kind-devops-lab -n monitoring port-forward --address 127.0.0.1 service/grafana 13000:3000
+```
+
+If port 13000 is already owned by an unrelated process, use `13001:3000` and open `http://127.0.0.1:13001`. Do not bind to `0.0.0.0`; the port-forward is intended to remain local. Kubernetes documents that the session ends when its selected Pod terminates and must be rerun to resume forwarding. [Kubernetes `kubectl port-forward` reference](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_port-forward/).
+
+Prometheus requests 100m CPU / 128 MiB memory and is limited to 500m / 384 MiB; its ephemeral storage limit is 640 MiB. Grafana requests 100m / 128 MiB and is limited to 500m / 384 MiB; its writable data volume is capped at 512 MiB and ephemeral storage at 768 MiB. The exporter requests 10m CPU / 24 MiB memory and is limited to 100m / 96 MiB; ephemeral storage is limited to 64 MiB. These are per-Pod Kubernetes requests/limits, not guaranteed actual usage. Prometheus retains at most three days or 384 MB of samples; Prometheus and Grafana use `emptyDir`, so their local history/settings can be lost if their Pods are replaced. Prometheus configuration, Grafana data source, and dashboard are recreated from checked-in manifests/ConfigMaps.
+
+The app’s `/actuator/health` endpoint reports health; `/actuator/prometheus` exports measurements. Prometheus scraping means it periodically requests that metrics endpoint and stores timestamped samples. A Prometheus target marked `DOWN` means scrape connectivity/response/format failed, while Actuator can still be `UP`; inspect target `lastError`, app Service endpoints, and app logs. Grafana queries Prometheus and displays returned samples; it does not collect metrics itself. If time-series panels are empty shortly after a restart, wait for scrapes and generate ordinary API traffic, then refresh the dashboard.
 
 ## 8. Troubleshooting
 
@@ -272,7 +376,7 @@ If you want to check whether unrelated monitoring Pods exist in the live cluster
 | Kubernetes API unreachable | `kubectl config get-contexts`; `kubectl --context kind-devops-lab cluster-info`; inspect node container and `podman logs`. | Start the existing node with the helper, then wait for Ready. If it times out, inspect node/runtime events; do not recreate the cluster. |
 | Node `NotReady` | `kubectl describe node devops-lab-control-plane`; `kubectl get events -A`; inspect kind container state. | Allow a short recovery window, rerun the bounded helper, and inspect Podman/node logs. Recent evidence included `NodeNotReady` and sandbox changes. |
 | Pod `Pending` | `kubectl describe pod -n default POD_NAME`; check node readiness, resource requests, PVC/events. | Resolve the specific scheduling or volume event; current chart requests 250m CPU and 512Mi memory per app/MySQL Pod. |
-| `ImagePullBackOff` | `kubectl describe pod`; inspect image and pull events. App image is `localhost/crewmeister-app:0.1`, pull policy `IfNotPresent`. | Check local Podman image and load the existing image into kind with `KIND_EXPERIMENTAL_PROVIDER=podman kind load docker-image localhost/crewmeister-app:0.1 --name devops-lab`. Do not redeploy unless an image update is intended. |
+| `ImagePullBackOff` | `kubectl --context kind-devops-lab -n default describe pod POD_NAME`; inspect image and pull events. Current Helm image is `localhost/crewmeister-app:0.2`, pull policy `IfNotPresent`. | Check whether that exact tag is present in kind with `podman exec devops-lab-control-plane crictl images`. If missing, follow the README’s Podman build/save and `kind load image-archive` commands for the intended tag. Do not redeploy unless an image update is intended. |
 | `CrashLoopBackOff` | `kubectl logs deployment/crewmeister-app --previous` or MySQL equivalent; inspect Pod events and Secret references without revealing values. | For app, check MySQL Service endpoints and startup/Flyway logs. For MySQL, inspect storage and startup logs. Fix the reported cause; do not delete the Pod/PVC as the first response. |
 | MySQL not Ready | `kubectl describe pod -l app=mysql`; MySQL logs; `kubectl get secret mysql-auth`; check PVC Bound and `mysql` endpoints. | Correct missing Secret/configuration only from a secured local source; investigate MySQL logs and storage. Do not print the password. |
 | PVC not `Bound` | `kubectl describe pvc mysql-data -n default`; `kubectl get storageclass`; events. | Resolve the storage class/provisioner condition shown. Do not delete/recreate the claim; it contains the database storage reference. |
@@ -280,8 +384,11 @@ If you want to check whether unrelated monitoring Pods exist in the live cluster
 | Health endpoint non-200 or not `UP` | Check app Pod readiness, app logs, MySQL Service endpoints, and port-forward output. | Wait for dependencies; inspect Flyway/connection errors. A failed health check is not proof that PVC data is lost. |
 | Port-forward fails | Check API/context, Service, endpoints, and whether 18080 is already listening (`ss -ltnp`). | Stop only a stale port-forward you own with Ctrl+C; otherwise choose another local port, e.g. `18081:8080`. |
 | No host listener after VM restart | `ss -ltnp`; inspect Podman published ports. | Expected if no `kubectl port-forward` is running. Start the port-forward again; ClusterIP is not a host listener. |
-| Prometheus target `DOWN` | Not applicable to this repo: no Prometheus target is configured. | If you installed separate monitoring, diagnose its own scrape config and app endpoint; do not report it as project monitoring. |
-| Grafana cannot connect to Prometheus | Not applicable to this repo: neither service is deployed by the project. | If independently installed, verify the configured data source URL and network reachability in that separate setup. |
+| Prometheus target `DOWN` | Inspect app endpoints with `kubectl --context kind-devops-lab -n default get endpoints crewmeister-app`; inspect target `lastError` through the Prometheus Targets page/API, app metrics endpoint, and Prometheus logs. | Ensure the app Pod is Ready, `default/crewmeister-app` has endpoints, and `/actuator/prometheus` responds. Reapply the checked-in config only if the scrape configuration drifted. |
+| Grafana cannot connect to Prometheus | Run `curl .../api/datasources/uid/prometheus/health` through the Grafana port-forward; inspect Grafana logs and Prometheus Service/endpoints. | The configured URL is `http://prometheus.monitoring.svc.cluster.local:9090`. Confirm Prometheus is Ready and its Service has an endpoint; keep both Services in the same cluster. |
+| Grafana Pod repeatedly evicted | `kubectl --context kind-devops-lab -n monitoring describe pod -l app=grafana`; inspect `Evicted` reason and ephemeral-storage events. | The manifest allows 512 MiB for Grafana’s data volume. Resolve the event and available node disk/resource issue before raising limits further. |
+| MySQL exporter Pod cannot start | `kubectl --context kind-devops-lab -n monitoring describe pod -l app=mysql-exporter`; check whether the referenced Secret exists using metadata only. | Run the guarded account helper only after approving its grants. Do not print Secret values or fall back to the MySQL root Secret. |
+| MySQL exporter target `DOWN` or `mysql_up` is 0 | Inspect exporter logs and target `lastError`; verify the MySQL Service has endpoints and the account grants/host match the exporter connection. | Correct the account/Secret only after verifying current account state. The exporter uses at most two open DB connections per scrape and the account is capped at three. |
 
 ### Actions not part of routine recovery
 
@@ -295,12 +402,12 @@ After a VM restart, run:
 ./scripts/verify-devops-lab.sh
 ```
 
-The script checks Podman, kind/Podman discovery, the existing cluster/context, node readiness, Helm status, both Deployments/Pods, ready Service endpoints, the Bound PVC, and Actuator health. It uses bounded waits. If no healthy port-forward is already listening on `127.0.0.1:18080`, it opens one temporarily and stops only that process when the script exits. It returns nonzero on a failed required check and does not inspect or print credentials.
-
-Prometheus-target health is not included because this project has no Prometheus deployment or scrape target. If the script fails, use the symptom table above and share diagnostics only after removing private values.
+The script checks Podman, kind/Podman discovery, the existing cluster/context, node readiness, Helm status, app/MySQL/exporter Deployments, app/MySQL/exporter Service endpoints, the Bound PVC, and Actuator health. It also checks both Prometheus targets, app uptime, `mysql_up=1`, the exporter `/metrics` endpoint, Grafana health/data source, the provisioned MySQL panels, and a live MySQL query through Grafana. It uses bounded waits and loopback-only temporary port-forwards on 18080, 19090, 13000, and 19104, reusing a responding local listener if available. It stops only port-forward processes it started, returns nonzero when any required check fails, and does not inspect or print credentials.
 
 ## Verification basis and limits
 
-Live output supplied from the RHEL VM on 2026-11-04 showed node `devops-lab-control-plane` Ready; app and MySQL Pods `1/1 Running`; PVC `mysql-data` Bound at 2Gi; Helm release `crewmeister` deployed, revision 3; Actuator status `UP`; and a POST, SQL lookup (ID 6), and GET round trip for the test user. The same Pod descriptions showed previous restarts with `NodeNotReady`, `SandboxChanged`, probe timeouts, and a MySQL termination reason `Unknown`/exit 255. Current readiness was good, but the underlying VM/node interruptions remain worth monitoring.
+User-provided output from the RHEL VM on 2026-11-04 showed node `devops-lab-control-plane` Ready; app and MySQL Pods `1/1 Running`; PVC `mysql-data` Bound at 2Gi; Helm release `crewmeister` deployed, revision 3; Actuator status `UP`; and a POST, SQL lookup (ID 6), and GET round trip for the test user. The Pod descriptions supplied in the same session showed prior `NodeNotReady`, `SandboxChanged`, probe timeouts, and MySQL termination reason `Unknown` / exit 255.
+
+On 2026-11-04, live read-only verification confirmed the app and MySQL Pods Ready, exporter Deployment Ready, `mysql-data` PVC Bound, and Helm release `crewmeister` deployed at revision 4. Prometheus reported app and exporter targets `up`, `mysql_up=1`, and nonempty MySQL uptime, connected-thread, max-connection, query, and connection samples. Grafana health returned database `ok`; the Prometheus data source was healthy; dashboard UID `crewmeister-app` loaded version 4 with 26 objects (21 data panels and five rows); Grafana's query API returned live MySQL uptime samples. `scripts/verify-devops-lab.sh` passed end to end. The current Grafana Pod is Ready with zero restarts and a Ready Service endpoint. Older Failed/Evicted Pod records remain visible from earlier starts; they were left untouched. The verifier did not exercise user API writes, to avoid changing application data.
 
 The agent audit environment cannot access the user’s Podman runtime directory, local Kubernetes API sockets, or systemd user bus. Thus it could not independently verify current Podman container mappings, the `terraform-lab` live node state, or whether the user oneshot is installed/enabled. Commands in this guide are provided to discover those values on the VM; where the expected Terraform node container name is inferred from kind’s default naming, it is explicitly identified as unconfirmed.

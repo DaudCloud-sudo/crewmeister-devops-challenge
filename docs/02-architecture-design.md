@@ -14,6 +14,10 @@ flowchart TD
     App --> DBsvc[MySQL Service]
     DBsvc --> DB[MySQL Pod]
     DB --> PVC[PersistentVolumeClaim]
+    App -->|Actuator metrics endpoint| Prometheus
+    Exporter[mysqld_exporter] -->|MySQL :3306| DB
+    Exporter -->|/metrics :9104| Prometheus
+    Grafana --> Prometheus
     Helm[Helm chart] --> App
     Helm --> DB
     TF[Terraform kind provider] --> TFCluster[Separate terraform-lab]
@@ -27,7 +31,8 @@ flowchart TD
 - **Helm:** packages and configures the application and database workloads.
 - **Terraform:** provisions a separate kind cluster named `terraform-lab`; it does not manage the application Helm release.
 - **GitHub Actions:** runs Maven verification with MySQL on a temporary hosted runner and uploads the JAR; it does not deploy.
-- **Actuator:** provides health information used by Kubernetes probes. Prometheus metrics scraping and Grafana are not implemented.
+- **Actuator:** provides health information used by Kubernetes probes and Micrometer metrics at `/actuator/prometheus`.
+- **Prometheus and Grafana:** plain manifests in `monitoring/` run independently from the app Helm release. Prometheus scrapes the app Service and a dedicated MySQL exporter; Grafana provisions a read-only data source and dashboard. Both use bounded ephemeral storage and are local-only.
 
 ## Constraints and trade-offs
 
@@ -39,7 +44,7 @@ flowchart TD
 ## Decisions still open
 
 - AWS is a possible future deployment target; no AWS resources are provisioned.
-- CD and metrics dashboards are optional enhancements.
+- CD is an optional enhancement; there is no automated deployment.
 
 ## Local Lab Runtime and Startup
 
