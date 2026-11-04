@@ -94,3 +94,8 @@ An optional next phase can compare AWS production architectures and CD approache
 - [Implementation and challenge notes](docs/CHALLENGES.md)
 - [Local operations and troubleshooting](docs/LOCAL-OPERATIONS-GUIDE.md)
 - [Podman networking experiment](docs/03-containerization-option-a.md)
+
+## References and Development Transparency
+
+- **Technical References:** [official documentation relevant to the project](docs/REFERENCES.md).
+- **Responsible AI Usage:** [Codex assistance, engineering ownership, and validation](docs/AI-USAGE.md).
