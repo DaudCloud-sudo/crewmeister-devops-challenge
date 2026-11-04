@@ -1,102 +1,90 @@
-# Crewmeister DevOps Coding Challenge
+# Crewmeister DevOps challenge
 
-A local-first DevOps implementation for the Crewmeister Spring Boot user-management API. This project demonstrates containerization, Kubernetes deployment, infrastructure provisioning, and automated build-and-test checks.
-
-## Challenge requirements
-
-| Challenge requirement | Implementation |
-|---|---|
-| Dockerfile | Container image for the Spring Boot application |
-| Helm chart | `helm/crewmeister` deploys the application and MySQL |
-| Terraform interacting with Kubernetes | Terraform provisions a local kind cluster |
-| Local-machine operation | Rootless Podman and kind on RHEL |
-| CI pipeline (Plus) | GitHub Actions build-and-test workflow |
-| Application health monitoring (Plus) | Spring Boot Actuator health endpoint |
-
-**Implementation scope:** Terraform currently manages a separate kind cluster named `terraform-lab`. Helm deploys Crewmeister and MySQL into `devops-lab`. Terraform does not currently manage that Helm release.
-
-## Architecture
+Packages and runs the supplied Java 17 Spring Boot user API with MySQL on a local kind cluster. The core tools are Docker-compatible image packaging, Helm deployment, Terraform-managed kind infrastructure, and a local Kubernetes workflow.
 
 ```mermaid
-flowchart TD
-    Dev[Developer] --> Git[Git repository]
-    Git --> GH[GitHub]
-    GH --> CI[GitHub Actions]
-    CI --> Test[Build and test]
-    Dev --> Podman[Rootless Podman]
-    Podman --> Kind[kind Kubernetes cluster]
-    Helm[Helm chart] --> Kind
-    Kind --> App[Crewmeister Spring Boot API]
-    Kind --> DB[MySQL + persistent volume]
-    App --> DB
-    App --> Health[Actuator health]
-    TF[Terraform] --> TFCluster[Separate kind cluster]
+flowchart LR
+  Source --> Maven[GitHub Actions: Maven verify + MySQL]
+  Maven --> Jar[Packaged JAR artifact]
+  Local[Developer on RHEL] --> Podman[kind nodes via Podman]
+  Dockerfile --> Image[Application image]
+  Image --> Devops[kind: devops-lab]
+  Helm --> Devops
+  Devops --> App[Spring Boot API]
+  Devops --> MySQL[MySQL + PVC]
+  App --> MySQL
+  App --> Health[Actuator health]
+  Terraform --> TerraformLab[Separate kind: terraform-lab]
 ```
 
-## Why these tools?
+## Run locally
 
-- **Podman:** supports rootless container execution without requiring a Docker daemon.
-- **kind:** provides a local Kubernetes environment using containers as nodes, avoiding a paid cloud dependency for development and verification.
-- **Helm:** groups Kubernetes resources and configuration into a reusable release, simplifying deployment and upgrades.
-- **Terraform:** demonstrates declarative and repeatable infrastructure provisioning.
-- **MySQL with a persistent volume:** separates database storage from the application pod. A PVC provides persistence, but it is not a backup or high-availability strategy.
-- **GitHub Actions:** automates build and test checks for pushes and pull requests.
-- **Actuator:** exposes application health information for operational checks.
-
-The local kind environment is intended for development and verification, not production high availability. The cluster is single-node.
-
-## Application
-
-The supplied application uses Java 17, Spring Boot 3.3.5, MySQL, Flyway, Spring Data JPA, Maven, and Spring Boot Actuator.
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /user` | Create a user |
-| `GET /user?id=<id>` | Retrieve a user by ID |
-| `/actuator/health` | Application health check |
-
-## Repository guide
-
-- [Architecture and design](docs/02-architecture-design.md) — architecture, design choices, and trade-offs.
-- [Containerization notes](docs/03-containerization-option-a.md) — containerization approach and evidence.
-- [Challenges and decisions](docs/CHALLENGES.md) — implementation challenges and decisions.
-- [Project checklist](docs/PROJECT_CHECKLIST.md) — implementation progress and remaining work.
-- [Helm chart](helm/crewmeister/) — application and MySQL deployment configuration.
-- [Terraform configuration](terraform/kind-lab/) — local kind cluster provisioning.
-- [Startup script](scripts/start-devops-lab.sh) — start and verify the existing lab.
-- [GitHub Actions workflow](.github/workflows/ci.yml) — automated build and test workflow.
-
-## Local lab
-
-The `devops-lab` cluster runs Crewmeister and MySQL using the Helm release `crewmeister`.
-
-Start and verify the existing lab:
+The startup helper starts the existing kind node container if needed, waits up to three minutes for a Ready node, then reports nodes, pods, and Helm releases. It does not create or reset a cluster or redeploy the application.
 
 ```bash
 ./scripts/start-devops-lab.sh
 ```
 
-Check the user-level startup service:
+After a VM restart, run `./scripts/verify-devops-lab.sh` for a bounded, non-destructive workload, storage, Service, Helm, and health check. See the [local operations guide](docs/LOCAL-OPERATIONS-GUIDE.md) for full recovery steps, API and MySQL checks, and troubleshooting.
+
+To package the application, build an image, and make it available to kind:
 
 ```bash
-systemctl --user status devops-lab-startup.service --no-pager
+./mvnw --batch-mode -DskipTests package
+podman build -t localhost/crewmeister-app:0.1 .
+kind load docker-image localhost/crewmeister-app:0.1 --name devops-lab
 ```
 
-The service is a systemd oneshot unit. `active (exited)` with a successful exit status means the startup and verification script completed.
+Helm is the canonical application deployment. Before installing, create the Kubernetes Secret from a local password file (never commit that file):
 
-## CI
+```bash
+kubectl --context kind-devops-lab create secret generic mysql-auth \
+  --from-file=root-password="$HOME/.config/crewmeister/mysql-root-password" \
+  --dry-run=client -o yaml | kubectl --context kind-devops-lab apply -f -
+helm upgrade --install crewmeister ./helm/crewmeister \
+  --kube-context kind-devops-lab
+```
 
-GitHub Actions runs the Maven build and tests on pushes and pull requests. The Spring Boot context test requires MySQL because Flyway initializes the database during application startup. The CI job therefore needs a MySQL service.
+Verify the deployment and health endpoint:
 
-## Limitations and next steps
+```bash
+kubectl --context kind-devops-lab get pods
+kubectl --context kind-devops-lab port-forward service/crewmeister-app 8080:8080
+# In another terminal:
+curl --fail http://localhost:8080/actuator/health
+```
 
-- Terraform does not yet manage the application Helm release.
-- The local kind cluster is single-node and does not provide node-level high availability.
-- Persistent storage is not a database backup strategy.
-- Prometheus and Grafana are not currently deployed.
-- CI is considered verified only after the workflow passes with its MySQL service configured.
+The chart defines readiness and liveness probes against Actuator health. A health check answers whether the application reports itself ready; it does not collect or graph historical measurements.
 
-## Challenge submission
+## Architecture and responsibilities
 
-This project uses locally runnable tools and does not require a paid cloud environment for the local lab. The repository is intended to document the implementation, its verification, and its current limitations.
+- **Dockerfile:** packages the Maven-built Java application into a container image.
+- **kind and Podman:** provide the local Kubernetes environment on the RHEL VM.
+- **Helm:** deploys Crewmeister and MySQL, including a PVC, to `devops-lab`.
+- **Terraform:** provisions the separate `terraform-lab` kind cluster. It does not currently manage the Helm release.
+- **GitHub Actions:** runs Maven `verify` (including the Spring context-load test, which starts Flyway) with MySQL on a temporary GitHub-hosted Ubuntu runner, separate from the RHEL VM. It uploads the JAR; it does not build/publish an image or deploy it.
+- **Actuator:** serves application health information used by Kubernetes probes and manual checks.
+- **Prometheus/Grafana:** not implemented. Prometheus would scrape a metrics endpoint and retain time-series measurements; Grafana would display those measurements in dashboards. There is no verified metrics endpoint or scrape target today.
+- **CD:** optional enhancement, not a core requirement. No automated deployment is configured.
+- **AWS:** architecture/design consideration only; no AWS resources or deployment are implemented.
 
+`k8s/` contains plain-manifest reference examples for the same app and database resources. They are not the deployment path; use the Helm chart as the source of truth to avoid maintaining two independently editable configurations. Both paths reference the `mysql-auth` Secret by name and key; neither stores its password value in source. A Kubernetes Secret keeps the value out of the manifest, but does not by itself guarantee encryption at rest.
+
+## Challenge checklist
+
+| Area | Status | Evidence / remaining work |
+|---|---|---|
+| Dockerfile | **Complete** | Java 17 runtime image; local Podman build is recorded in `docs/CHALLENGES.md`. Rebuild to verify current local environment. |
+| Helm chart | **Complete** | `helm/crewmeister` defines app, MySQL, Services, probes, and PVC. Live release not verified in this review. |
+| Terraform + Kubernetes | **Partial** | `terraform/kind-lab/main.tf` provisions a separate kind cluster. It does not manage the app Helm release. |
+| Local Kubernetes with kind | **Complete** | `devops-lab` and Helm deployment are documented as previously verified; current live cluster was not reachable during the last audit. |
+| GitHub Actions CI (Plus) | **Partial** | Workflow runs Maven verification with MySQL and uploads a JAR. Current remote run status is unverified. |
+| Monitoring (Plus) | **Partial** | Actuator health and Kubernetes probes are configured. No Prometheus scraping or Grafana dashboards. |
+
+## Limits and verification notes
+
+The local kind cluster is single-node. A PVC is not a database backup. Terraform’s kind provider is local-only; cloud deployment would need a provider-specific cluster and authentication configuration. The workflow source is present, but GitHub execution status must be checked on the repository’s Actions page.
+
+See [architecture](docs/02-architecture-design.md), [implementation notes](docs/CHALLENGES.md), and [checklist](docs/PROJECT_CHECKLIST.md) for concise evidence and remaining work.
+
+For VM restart recovery, MySQL/API verification, port-forwarding, and troubleshooting, see the [local operations guide](docs/LOCAL-OPERATIONS-GUIDE.md).

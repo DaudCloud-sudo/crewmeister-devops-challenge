@@ -8,7 +8,7 @@ The first implementation is local-first. A single-node kind cluster provides a r
 flowchart TD
     Dev[Developer] --> Git[GitHub repository]
     Git --> CI[GitHub Actions: test and build]
-    CI -. image delivery method TBD .-> App[Spring Boot application]
+    CI --> Artifact[Verified JAR artifact]
     User[Local user] --> Svc[Kubernetes Service]
     Svc --> App
     App --> DBsvc[MySQL Service]
@@ -16,8 +16,7 @@ flowchart TD
     DB --> PVC[PersistentVolumeClaim]
     Helm[Helm chart] --> App
     Helm --> DB
-    TF[Terraform] --> Cluster[Existing kind cluster]
-    Cluster --> Helm
+    TF[Terraform kind provider] --> TFCluster[Separate terraform-lab]
 ```
 
 ## Responsibilities
@@ -26,9 +25,9 @@ flowchart TD
 - **MySQL:** stores application data; persistence is provided through a PVC.
 - **kind:** runs the local Kubernetes cluster.
 - **Helm:** packages and configures the application and database workloads.
-- **Terraform:** manages selected resources in the existing cluster.
-- **GitHub Actions:** will test and build the application.
-- **Actuator:** provides application health endpoints; monitoring integration is not yet verified.
+- **Terraform:** provisions a separate kind cluster named `terraform-lab`; it does not manage the application Helm release.
+- **GitHub Actions:** runs Maven verification with MySQL on a temporary hosted runner and uploads the JAR; it does not deploy.
+- **Actuator:** provides health information used by Kubernetes probes. Prometheus metrics scraping and Grafana are not implemented.
 
 ## Constraints and trade-offs
 
@@ -39,12 +38,8 @@ flowchart TD
 
 ## Decisions still open
 
-- Container runtime on RHEL.
-- Image delivery into kind: `kind load` or a local registry.
-- Application access method.
-- Terraform state location and exact resource ownership.
-- Whether to add Prometheus and Grafana.
-- Whether to use AWS after the local workflow is verified.
+- AWS is a possible future deployment target; no AWS resources are provisioned.
+- CD and metrics dashboards are optional enhancements.
 
 ## Local Lab Runtime and Startup
 
@@ -53,8 +48,8 @@ cluster hosts the Crewmeister application and MySQL, deployed through the Helm
 release `crewmeister`.
 
 The helper script `scripts/start-devops-lab.sh` starts the existing kind node
-container when necessary, waits for the Kubernetes node to become Ready, and
-reports the application pods, database pod, and Helm release.
+container when necessary, waits at most 180 seconds for a Ready Kubernetes node,
+and reports nodes, pods, and Helm releases. It does not create or reset a cluster.
 
 A user-level systemd oneshot service, `devops-lab-startup.service`, invokes this
 script at user startup. Its `active (exited)` state with a successful exit status

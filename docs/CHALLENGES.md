@@ -104,14 +104,13 @@ verified outcomes from planned improvements.
 
 ## Current status
 
-- Maven verification: passed.
-- Local app and Actuator health: verified.
-- POST and GET API operations: verified.
-- Application image: built.
-- App container: created using host-gateway connectivity; container health
-  and API behavior still need to be verified.
-- Dedicated bridge-network setup with preserved MySQL data: planned, not yet
-  implemented or verified.
+- Earlier local evidence records Maven verification, health checks, POST/GET
+  persistence, an image build, and both Podman networking options as successful.
+- These are historical verification notes, not a claim that the containers or
+  kind clusters are currently running. Current live status must be checked on
+  the RHEL VM.
+- Kubernetes deployment evidence is summarized in `docs/PROJECT_CHECKLIST.md`;
+  the current audit could not reach the local Kubernetes API.
 
 ## Container networking milestone — Option A verified
 - **Challenge:** The app container needed to connect to MySQL running in a
@@ -124,11 +123,8 @@ verified outcomes from planned improvements.
   `Container Test User` in MySQL (ID 3), and GET retrieved it successfully.
 - **Persistence finding:** `/var/lib/mysql` is backed by a named Podman volume.
   Preserve and reuse it when recreating the database container.
-- **Trade-off:** Option A routes through the host gateway. It is a useful
-  diagnostic/learning step; Option B will use direct container-name DNS on a
-  shared bridge network.
-- **Next action:** Implement Option B without deleting the database volume, then
-  repeat health and POST/GET verification.
+- **Trade-off:** Option A routes through the host gateway. Option B below is the
+  completed follow-up and uses direct container-name DNS on a shared bridge.
 
 ## Container networking — Option B
 
@@ -164,4 +160,10 @@ cluster by invoking `scripts/start-devops-lab.sh`. The service is expected to sh
 The startup helper verifies the existing environment; it does not create a new
 cluster, apply Terraform, or redeploy the Helm release. Terraform-to-Helm
 integration remains a possible follow-up.
+
+The helper waits up to 180 seconds for the Kubernetes node to report `Ready`.
+This bound lets slow startup finish while ensuring a missing or unhealthy API
+returns a failure instead of leaving a systemd oneshot waiting forever. Actuator
+health is used by the application probes; Prometheus scraping and Grafana
+dashboards are not implemented.
 

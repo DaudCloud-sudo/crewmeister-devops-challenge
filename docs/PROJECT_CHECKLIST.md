@@ -1,110 +1,28 @@
-# DevOps Challenge — Project Checklist
+# Challenge checklist
 
-This checklist tracks the implementation of the Crewmeister DevOps challenge.
-Items are marked complete only after they have been tested.
+Statuses reflect repository evidence and recorded test results. “Unverified” means the current live environment or GitHub run was not checked; it does not erase earlier documented results.
 
-## Environment
+| Requirement | Class | Status | Evidence and remaining work |
+|---|---|---|---|
+| Dockerfile | Core | Complete | `Dockerfile` packages the Java 17 JAR. `docs/CHALLENGES.md` records a successful Podman image build; rebuild for current verification. |
+| Helm chart | Core | Complete | `helm/crewmeister/` defines app, MySQL, services, probes, and persistent volume claim. Current cluster release not live-verified. |
+| Terraform interacting with Kubernetes | Core | Partial | `terraform/kind-lab/main.tf` provisions `terraform-lab` through the kind provider. It does not manage the `devops-lab` Helm release. |
+| Local Kubernetes with kind | Core | Complete | Prior `docs/CHALLENGES.md` and local lab notes record `devops-lab` deployment and API checks. Current cluster access was blocked during the audit. |
+| GitHub Actions CI | Plus | Partial | `.github/workflows/ci.yml` runs Maven verification with MySQL and uploads a JAR. Latest hosted run status not verified. |
+| Monitoring | Plus | Partial | Actuator health endpoint and Kubernetes probes are configured. Prometheus metrics scraping and Grafana are not implemented. |
 
-- RHEL 10.2 VM: 8 CPUs, 8 GB RAM, 40 GB virtual disk.
-- Git repository cloned from the official challenge source.
-- Working branch: `devops-implementation`.
-- GitHub is the project record; Notion is secondary.
+## Implementation and evidence
 
-## 01 — Project Requirements & Discovery
-- [ ] Map challenge requirements to implementation and tests.
-- [ ] Record assumptions, constraints, acceptance criteria, and risks.
-- [ ] Separate core requirements from Plus features.
+- **Application/container:** Java 17, Spring Boot, Maven, MySQL, Flyway; container image is built from the packaged JAR.
+- **Canonical deployment:** Helm deploys Crewmeister and MySQL to `devops-lab`. The raw `k8s/` manifests are reference examples, not a second supported deployment path.
+- **Infrastructure boundary:** Terraform provisions a separate `terraform-lab` kind cluster. It does not own the application release.
+- **Startup helper:** starts the existing kind node container when stopped, waits at most 180 seconds for a Ready Kubernetes node, and reports the cluster state. It never creates or resets a cluster.
+- **Credentials:** the database password is expected in a locally provisioned Kubernetes Secret. No password value belongs in the repository.
 
-## 02 — Architecture & Design
-- [x] Choose a local-first design using kind.
-- [x] Start with a single-node cluster; document its HA limitation.
-- [x] Plan MySQL in Kubernetes with a PVC.
-- [x] Create kind with the CLI; use Terraform for selected cluster resources.
-- [ ] Record remaining decisions and alternatives.
+## Optional work and limitations
 
-## 03 — Application & Containerization
-- [x] Inspect the controller, entity, and repository.
-- [ ] Verify the application configuration, migration, and tests.
-- [ ] Build and test the supplied application.
-- [ ] Create and verify the Dockerfile and image.
-
-## 04 — Kubernetes & Helm
-- [ ] Install required tools.
-- [ ] Create and verify the kind cluster.
-- [ ] Create the Helm chart and deploy the application and database.
-- [ ] Verify access, configuration, and persistence.
-
-## 05 — Terraform & AWS
-- [ ] Configure Terraform for the existing kind cluster.
-- [ ] Verify plan, apply, and teardown.
-- [ ] Consider AWS only after the local workflow is working.
-
-## 06 — CI/CD Engineering
-- [ ] Add GitHub Actions for tests and build.
-- [ ] Decide whether CI publishes an image.
-- [ ] Document release and rollback steps.
-
-## 07 — Observability & Operations
-- [ ] Verify Actuator health checks.
-- [ ] Decide whether to add Prometheus and Grafana.
-- [ ] Document logs, health checks, and troubleshooting.
-
-## 08 — Security & Reliability
-- [ ] Keep credentials out of Git.
-- [ ] Review container and Kubernetes permissions.
-- [ ] Document persistence, backup, and single-node limitations.
-
-## 09 — Deployment & Operations Runbook
-- [ ] Document setup from a fresh RHEL environment.
-- [ ] Include build, deploy, verify, upgrade, and cleanup steps.
-- [ ] Test the instructions from a clean environment.
-
-## 10 — Interview Preparation & AI Usage
-- [ ] Explain the architecture and key trade-offs.
-- [ ] Prepare answers based on the implementation.
-- [ ] Record AI assistance and what was independently verified.
-
-## Decisions
-
-- Keep the starter API behavior unchanged unless an optional change is approved.
-- A PVC provides local persistence, not a backup.
-- A VMware snapshot is not an application rollback or database backup.
-- A single-node kind cluster is for local verification, not node-level HA.
-- Do not claim tools or features are working until verified.
-
-## Progress
-
-- [x] Inspect RHEL environment.
-- [x] Clone the challenge repository.
-- [x] Create `devops-implementation` from `main`.
-- [x] Commit project documentation.
-- [x] Verify the Java application.
-
-## Progress checkpoint — Containerization verified
-- [x] Build and verify the Spring Boot application with MySQL available.
-- [x] Build the application container image with Podman.
-- [x] Run the app container on host port 8081 -> container port 8080.
-- [x] Verify Actuator health from the container.
-- [x] Verify POST -> MySQL persistence -> GET through the container.
-- [x] Confirm MySQL data directory is backed by a named Podman volume.
-- [x] Implement Option B: app and MySQL on dedicated Podman bridge network.
-- [x] Re-test app health and API persistence with container-name DNS.
-- [x] Complete the local kind/Kubernetes and Helm deployment.
-- [x] Provision a separate kind lab cluster with Terraform.
-- [ ] Integrate Terraform with the application Helm release, if required.
-- [ ] Implement CI/CD, observability, security hardening, and the operations runbook.
-
-Option A evidence and details: `docs/03-containerization-option-a.md`.
-
-## Local Lab Startup and Verification
-
-- [x] Create and verify the kind cluster `devops-lab` using rootless Podman.
-- [x] Deploy Crewmeister and MySQL to `devops-lab` using Helm.
-- [x] Verify application and database pods are Running and the API is functional.
-- [x] Add `scripts/start-devops-lab.sh` to start and verify the existing lab.
-- [x] Configure the user-level `devops-lab-startup.service`.
-- [x] Verify the systemd oneshot service completes successfully.
-- [x] Add Terraform configuration for a separate kind cluster named `terraform-lab`.
-- [ ] Integrate Terraform management of the application Helm release, if required.
-- [ ] Add CI workflow and monitoring components.
-
+- A CI image-build check, image publication, and CD are optional; no automated delivery is configured.
+- Prometheus/Grafana are optional enhancements; health probes already provide basic health checking.
+- AWS is design-only. No cloud resources are provisioned.
+- Single-node kind has no node-level high availability. A PVC is not a backup.
+- The RHEL VM’s Kubernetes API and Podman runtime could not be inspected in the audit due to sandbox socket/runtime permissions; current live status remains unverified.

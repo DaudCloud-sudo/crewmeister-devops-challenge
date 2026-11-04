@@ -1,4 +1,4 @@
-# Containerization — Option A (Host Gateway)
+# Containerization — Podman networking evidence
 
 ## Status
 Verified locally on RHEL 10.2 using Podman.
@@ -50,10 +50,8 @@ Option A is a valid connectivity test and makes use of the host's published
 database port. It introduces a host-gateway dependency and is less direct than
 container-to-container DNS on a shared bridge network.
 
-## Next
-Implement Option B: connect/recreate MySQL on the dedicated Podman bridge,
-preserve/reuse its named volume, and configure the app datasource URLs to use
-the database container name and port 3306. Re-test health and API persistence.
+Option A is retained as a verified connectivity experiment. The selected
+container-to-container setup is Option B below.
 
 # Option B — Shared Podman Bridge Network
 

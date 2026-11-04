@@ -1,12 +1,4 @@
-apiVersion: v1
-kind: Secret
-metadata:
-  name: mysql-auth
-  namespace: default
-type: Opaque
-stringData:
-  root-password: "dev"
----
+# Reference manifest only. Helm is canonical; provision mysql-auth separately.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

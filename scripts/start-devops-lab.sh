@@ -1,52 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLUSTER="devops-lab"
-NODE_CONTAINER="${CLUSTER}-control-plane"
-KUBE_CONTEXT="kind-${CLUSTER}"
+cluster="devops-lab"
+node_container="${cluster}-control-plane"
+context="kind-${cluster}"
+timeout_seconds=180
+interval_seconds=3
 
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-}
-
-log "Starting existing kind cluster: ${CLUSTER}"
-
-if ! podman container exists "${NODE_CONTAINER}"; then
-  log "ERROR: Podman container ${NODE_CONTAINER} does not exist."
-  log "The cluster may need recovery or recreation."
+if ! podman container exists "$node_container"; then
+  echo "Error: kind node container '$node_container' does not exist." >&2
   exit 1
 fi
 
-if [[ "$(podman inspect -f '{{.State.Running}}' "${NODE_CONTAINER}")" != "true" ]]; then
-  podman start "${NODE_CONTAINER}"
-else
-  log "Node container is already running."
+if [[ "$(podman inspect -f '{{.State.Running}}' "$node_container")" != "true" ]]; then
+  podman start "$node_container" >/dev/null
 fi
 
-log "Waiting for Kubernetes node to become Ready..."
-
-for attempt in $(seq 1 60); do
-  if kubectl --context "${KUBE_CONTEXT}" get nodes \
-      --no-headers 2>/dev/null | grep -q ' Ready '; then
-    break
-  fi
-
-  if [[ "${attempt}" -eq 60 ]]; then
-    log "ERROR: Kubernetes node did not become Ready within 5 minutes."
-    kubectl --context "${KUBE_CONTEXT}" get nodes || true
+echo "Waiting up to ${timeout_seconds}s for a Ready Kubernetes node..."
+deadline=$((SECONDS + timeout_seconds))
+until kubectl --context "$context" get nodes --no-headers 2>/dev/null | grep -q ' Ready '; do
+  if (( SECONDS >= deadline )); then
+    echo "Error: Kubernetes node did not become Ready within ${timeout_seconds}s." >&2
+    kubectl --context "$context" get nodes || true
     exit 1
   fi
-
-  sleep 5
+  sleep "$interval_seconds"
 done
 
-log "Kubernetes node status:"
-kubectl --context "${KUBE_CONTEXT}" get nodes
-
-log "Crewmeister workloads:"
-kubectl --context "${KUBE_CONTEXT}" get pods
-
-log "Helm releases:"
-helm --kube-context "${KUBE_CONTEXT}" list --all-namespaces
-
-log "Startup checks completed."
+kubectl --context "$context" get nodes
+kubectl --context "$context" get pods
+helm --kube-context "$context" list --all-namespaces
